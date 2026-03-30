@@ -45,6 +45,7 @@ class HPSv3RewardInferencer():
 
         if "model" in state_dict:
             state_dict = state_dict["model"]
+        state_dict = self._adapt_qwen2vl_state_dict(model, state_dict)
         model.load_state_dict(state_dict, strict=True)
         model.eval()
 
@@ -53,6 +54,32 @@ class HPSv3RewardInferencer():
 
         self.model.to(self.device)
         self.data_config = data_config
+
+    @staticmethod
+    def _adapt_qwen2vl_state_dict(model, state_dict):
+        adapt_state_dict = {}
+        reverse_mappings = {
+            "model.visual.": "visual.",
+            "model.language_model.layers.": "model.layers.",
+            "model.language_model.norm.": "model.norm.",
+            "model.language_model.embed_tokens.": "model.embed_tokens.",
+            "model.language_model.lm_head.": "lm_head."
+        }
+        
+        for exp_key in model.state_dict().keys():
+            # 1. Direct match
+            if exp_key in state_dict:
+                adapt_state_dict[exp_key] = state_dict[exp_key]
+                
+            # 2. Check for possible old key
+            elif (old_key := next((exp_key.replace(n, o, 1) for n, o in reverse_mappings.items() if exp_key.startswith(n)), None)) and old_key in state_dict:
+                adapt_state_dict[exp_key] = state_dict[old_key]
+            
+            # 3. If still not found, raise an error
+            else:
+                raise RuntimeError(f"Strict Error: Missing key '{exp_key}'. Not found in old or new format.")
+                
+        return adapt_state_dict
 
     def _pad_sequence(self, sequences, attention_mask, max_len, padding_side='right'):
         """
