@@ -30,28 +30,11 @@ from transformers.trainer import (
     WEIGHTS_NAME,
     TRAINING_ARGS_NAME,
     SAFE_WEIGHTS_NAME,
-    TRAINER_STATE_NAME,
     PREFIX_CHECKPOINT_DIR,
     logger,
-    speed_metrics,
-    deepspeed_init,
-    speed_metrics,
-    has_length,
-    EvalPrediction,
-    EvalLoopContainer,
-    PredictionOutput,
-    is_torch_xla_available,
-    denumpify_detensorize,
-    PredictionOutput,
-    EvalLoopOutput,
-    DistributedTensorGatherer,
-    SequentialDistributedSampler,
-    nested_concat,
 )
-from transformers.trainer_pt_utils import IterableDatasetShard
-from transformers.trainer_callback import TrainerControl, TrainerState
 
-from transformers.trainer_pt_utils import nested_detach, find_batch_size
+from transformers.trainer_pt_utils import nested_detach
 from transformers.training_args import TrainingArguments
 from trl import RewardTrainer
 from hpsv3.utils.training_utils import get_peft_state_non_lora_maybe_zero_3
@@ -97,7 +80,7 @@ class Qwen2VLRewardModelBT(Qwen2VLForConditionalGeneration):
 
             else:
                 self.rm_head = nn.Sequential(
-                    nn.Linear(config.hidden_size, 1024),
+                    nn.Linear(config.text_config.hidden_size, 1024),
                     nn.ReLU(),
                     nn.Dropout(0.05),
                     nn.Linear(1024, 16),
@@ -129,6 +112,8 @@ class Qwen2VLRewardModelBT(Qwen2VLForConditionalGeneration):
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
         rope_deltas: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.LongTensor] = None,
+        logits_to_keep: Optional[int] = None,
     ):
         ## modified from the origin class Qwen2VLForConditionalGeneration
         output_attentions = (
@@ -148,8 +133,8 @@ class Qwen2VLRewardModelBT(Qwen2VLForConditionalGeneration):
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
             if pixel_values is not None:
-                pixel_values = pixel_values.type(self.visual.get_dtype())
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                pixel_values = pixel_values.type(self.model.visual.get_dtype())
+                image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
                 image_mask = (
                     (input_ids == self.config.image_token_id)
                     .unsqueeze(-1)
@@ -161,8 +146,8 @@ class Qwen2VLRewardModelBT(Qwen2VLForConditionalGeneration):
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
             if pixel_values_videos is not None:
-                pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                pixel_values_videos = pixel_values_videos.type(self.model.visual.get_dtype())
+                video_embeds = self.model.visual(pixel_values_videos, grid_thw=video_grid_thw).pooler_output
                 video_mask = (
                     (input_ids == self.config.video_token_id)
                     .unsqueeze(-1)

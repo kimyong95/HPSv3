@@ -44,7 +44,6 @@ def create_model_and_processor(
         revision=model_config.model_revision,
         device_map=get_kbit_device_map() if quantization_config is not None else None,
         quantization_config=quantization_config,
-        use_cache=False
     )
 
     # create processor and set padding
