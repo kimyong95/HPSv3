@@ -1,11 +1,14 @@
 
 import os
+import types
 from collections.abc import Mapping
 import torch
 import huggingface_hub
+from omegaconf import OmegaConf
+from transformers import HfArgumentParser
 from .dataset.utils import process_vision_info
 from .dataset.data_collator_qwen import prompt_with_special_token, prompt_without_special_token, INSTRUCTION
-from .utils.parser import ModelConfig, PEFTLoraConfig, TrainingConfig, DataConfig, parse_args_with_yaml
+from .utils.parser import ModelConfig, PEFTLoraConfig, DataConfig
 from .train import create_model_and_processor
 from pathlib import Path
 
@@ -15,18 +18,27 @@ class HPSv3RewardInferencer():
     def __init__(self, config_path=None, checkpoint_path=None, device='cuda', differentiable=False):
         if config_path is None:
                 config_path = os.path.join(_MODEL_CONFIG_PATH, 'HPSv3_7B.yaml')
-                
+
         if checkpoint_path is None:
             checkpoint_path = huggingface_hub.hf_hub_download("MizzenAI/HPSv3", 'HPSv3.safetensors', repo_type='model')
 
-        (data_config, training_args, model_config, peft_lora_config), config_path = (
-            parse_args_with_yaml(
-                (DataConfig, TrainingConfig, ModelConfig, PEFTLoraConfig), config_path, is_train=False
-            )
+        args = OmegaConf.to_container(OmegaConf.load(config_path))
+        args.pop('deepspeed', None)
+
+        parser = HfArgumentParser((DataConfig, ModelConfig, PEFTLoraConfig))
+        data_config, model_config, peft_lora_config = parser.parse_dict(args, allow_extra_keys=True)
+
+        # Minimal namespace with only the fields create_model_and_processor needs
+        training_args = types.SimpleNamespace(
+            output_dir=os.path.join(
+                args.get('output_dir', 'output_models'),
+                str(config_path).split("/")[-1].split(".")[0],
+            ),
+            disable_flash_attn2=args.get('disable_flash_attn2', False),
+            bf16=args.get('bf16', False),
+            fp16=args.get('fp16', False),
         )
-        training_args.output_dir = os.path.join(
-            training_args.output_dir, config_path.split("/")[-1].split(".")[0]
-        )
+
         model, processor, peft_config = create_model_and_processor(
             model_config=model_config,
             peft_lora_config=peft_lora_config,
